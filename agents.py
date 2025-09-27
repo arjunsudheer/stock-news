@@ -3,9 +3,35 @@ from autogen_agentchat.agents import AssistantAgent
 from autogen_agentchat.conditions import TextMentionTermination
 from autogen_agentchat.teams import SelectorGroupChat
 from autogen_agentchat.messages import BaseAgentEvent, BaseChatMessage
-from typing import Dict, Any, Sequence
+from typing import Dict, Any, Sequence, List
 from datetime import datetime
 import json
+from duckduckgo_search import DDGS
+from autogen_core.tools import FunctionTool
+import asyncio
+from functools import partial
+
+
+async def web_search(query: str, num_results: int = 3) -> List[Dict[str, str]]:
+    """
+    Perform a web search using DuckDuckGo
+    """
+    try:
+        # Run DuckDuckGo search in a thread pool to avoid blocking
+        loop = asyncio.get_event_loop()
+        with DDGS() as ddgs:
+            search_func = partial(list, ddgs.text(query, max_results=num_results))
+            results = await loop.run_in_executor(None, search_func)
+
+        formatted_results = []
+        for r in results:
+            formatted_results.append(
+                {"title": r["title"], "link": r["link"], "snippet": r["body"]}
+            )
+        return formatted_results
+    except Exception as e:
+        print(f"Search error: {str(e)}")
+        return []
 
 
 class StockAnalysisSystem:
@@ -33,24 +59,37 @@ class StockAnalysisSystem:
             },
         )
 
+        web_search_tool = FunctionTool(
+            web_search,
+            description="Use this tool to perform web searches for current information about stocks.",
+        )
+
         buy_agent = AssistantAgent(
             name="BuyAgent",
             description="This agent argues in favor of buying the stock.",
             model_client=debator_client,
+            tools=[web_search_tool],
             system_message="""You are an optimistic stock market analyst who believes in long-term growth and potential.
             Your job is to convince the other analysts on why a particular stock may be a good buy. Focus on:
             - Future market potential and growth opportunities
             - Innovative aspects of companies
             - Long-term market trends
             - Positive industry developments
+
+            You have access to a web search function that you can use to find current information about stocks.
+            To use it, format your requests like this: "Let me search for: [your search query]"
+            You can search for recent news, market analysis, or company developments to support your arguments.
+
             Always look for the upside potential in stock investments.
-            You may reference and critique the other analysts' perspectives.""",
+            You may reference and critique the other analysts' perspectives.
+            Make sure to cite any information you find from web searches.""",
         )
 
         sell_agent = AssistantAgent(
             name="SellAgent",
             description="This agent argues in favor of selling the stock.",
             model_client=debator_client,
+            tools=[web_search_tool],
             system_message="""You are a cautious and skeptical stock market analyst.
             Your job is to convince the other analysts on why a particular stock may be a good sell. Focus on:
             - Current financial metrics and performance
@@ -59,22 +98,35 @@ class StockAnalysisSystem:
             - Related stocks in the same sector
             - Competition and market challenges
             - Potential alternative investments that are better given the money that could be made by selling this stock
+
+            You have access to a web search function that you can use to find current information about stocks.
+            To use it, format your requests like this: "Let me search for: [your search query]"
+            You can search for recent news about risks, competitors, market challenges, or negative developments.
+
             Always consider what could go wrong with an investment.
-            You may reference and critique the other analysts' perspectives.""",
+            You may reference and critique the other analysts' perspectives.
+            Make sure to cite any information you find from web searches.""",
         )
 
         hold_agent = AssistantAgent(
             name="HoldAgent",
             description="This agent argues in favor of holding the stock.",
             model_client=debator_client,
+            tools=[web_search_tool],
             system_message="""You are a calm and collected analyst who isn't easily swayed by emotions.
             Your job is to convince the other analysts on why a particular stock may be a good hold. Focus on:
             - Long-term potential of the stock
             - Market stability and trends
             - Balanced view of risks and rewards
             - Technical analysis indicators
+
+            You have access to a web search function that you can use to find current information about stocks.
+            To use it, format your requests like this: "Let me search for: [your search query]"
+            You can search for historical trends, market analysis, and balanced perspectives on the stock.
+
             Always advocate for patience and careful consideration.
-            You may reference and critique the other analysts' perspectives.""",
+            You may reference and critique the other analysts' perspectives.
+            Make sure to cite any information you find from web searches.""",
         )
 
         self.debate_facilitator_agent = AssistantAgent(
@@ -194,7 +246,7 @@ class StockAnalysisSystem:
         """
 
         try:
-            # Run the RoundRobinGroupChat and capture all messages
+            # Run the SelectorGroupChat and process messages for web search
             stock_recommendations = await self.stock_recommendation_team.run(task=task)
 
             final_message = stock_recommendations.messages[-1].content
