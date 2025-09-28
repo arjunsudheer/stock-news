@@ -69,6 +69,7 @@ class StockAnalysisSystem:
             description="This agent argues in favor of buying the stock.",
             model_client=debator_client,
             tools=[web_search_tool],
+            reflect_on_tool_use=True,
             system_message="""You are an optimistic stock market analyst who believes in long-term growth and potential.
             Your job is to convince the other analysts on why a particular stock may be a good buy. Focus on:
             - Future market potential and growth opportunities
@@ -77,7 +78,6 @@ class StockAnalysisSystem:
             - Positive industry developments
 
             You have access to a web search function that you can use to find current information about stocks.
-            To use it, format your requests like this: "Let me search for: [your search query]"
             You can search for recent news, market analysis, or company developments to support your arguments.
 
             Always look for the upside potential in stock investments.
@@ -90,6 +90,7 @@ class StockAnalysisSystem:
             description="This agent argues in favor of selling the stock.",
             model_client=debator_client,
             tools=[web_search_tool],
+            reflect_on_tool_use=True,
             system_message="""You are a cautious and skeptical stock market analyst.
             Your job is to convince the other analysts on why a particular stock may be a good sell. Focus on:
             - Current financial metrics and performance
@@ -100,7 +101,6 @@ class StockAnalysisSystem:
             - Potential alternative investments that are better given the money that could be made by selling this stock
 
             You have access to a web search function that you can use to find current information about stocks.
-            To use it, format your requests like this: "Let me search for: [your search query]"
             You can search for recent news about risks, competitors, market challenges, or negative developments.
 
             Always consider what could go wrong with an investment.
@@ -113,6 +113,7 @@ class StockAnalysisSystem:
             description="This agent argues in favor of holding the stock.",
             model_client=debator_client,
             tools=[web_search_tool],
+            reflect_on_tool_use=True,
             system_message="""You are a calm and collected analyst who isn't easily swayed by emotions.
             Your job is to convince the other analysts on why a particular stock may be a good hold. Focus on:
             - Long-term potential of the stock
@@ -121,7 +122,6 @@ class StockAnalysisSystem:
             - Technical analysis indicators
 
             You have access to a web search function that you can use to find current information about stocks.
-            To use it, format your requests like this: "Let me search for: [your search query]"
             You can search for historical trends, market analysis, and balanced perspectives on the stock.
 
             Always advocate for patience and careful consideration.
@@ -150,13 +150,15 @@ class StockAnalysisSystem:
             Finally, guide the group towards a consensus recommendation. Ask each analyst to summarize their final stance and reasoning.
             Ensure that all the analysts agree on one final recommendation.
 
-            After the analysts have reached a consensus, provide a concise summary of the entire discussion, highlighting the key points from each analyst.
-            Your summary must follow this exact format:
+            After the analysts have reached a consensus, provide a concise summary to the user. **Do not** summarize the entire debate, instead
+            just give the final recommendation with a brief 2 sentence explanation. Your summary must follow this exact format:
 
-            Consensus Recommendation: [Buy/Sell/Hold]
-            [Key Point 1 from BuyAgent]
-            [Key Point 1 from SellAgent]
-            [Key Point 1 from HoldAgent]
+            **Consensus Recommendation:** [Buy/Sell/Hold]
+
+            * **Key reason to buy:** [Key Point 1 from BuyAgent]
+            * **Key reason to sell:** [Key Point 1 from SellAgent]
+            * **Key reason to hold:** [Key Point 1 from HoldAgent]
+
             [2 - 3 sentence summary of the overall discussion and why the consensus was reached.]
 
             End your markdown summary with 'TERMINATE' on a new line.""",
@@ -215,8 +217,6 @@ class StockAnalysisSystem:
         """
         Use llama-guard to verify content safety
         """
-        # Initialize a conversation with llama-guard
-
         # Ask llama-guard to verify the content
         response = await self.moderator_agent.run(task=content)
 
@@ -249,20 +249,28 @@ class StockAnalysisSystem:
             # Run the SelectorGroupChat and process messages for web search
             stock_recommendations = await self.stock_recommendation_team.run(task=task)
 
-            final_message = stock_recommendations.messages[-1].content
-            final_message = final_message.replace("TERMINATE", "").strip()
+            full_message = stock_recommendations.messages[-1].content
+
+            # Extract just the consensus section
+            consensus_section = ""
+            if "**Consensus Recommendation:**" in full_message:
+                consensus_parts = full_message.split("**Consensus Recommendation:**")
+                if len(consensus_parts) > 1:
+                    consensus_section = (
+                        "**Consensus Recommendation:**" + consensus_parts[1]
+                    )
+                    consensus_section = consensus_section.split("TERMINATE")[0].strip()
+
+            if not consensus_section:
+                consensus_section = "Error: Could not extract consensus recommendation."
 
             # Verify content safety - this will pause execution until moderation is complete
-            is_safe = await self.__verify_content_safety(final_message)
+            is_safe = await self.__verify_content_safety(consensus_section)
 
             if not is_safe:
-                final_message = "The content generated was flagged as unsafe by the moderation system."
+                consensus_section = "The content generated was flagged as unsafe by the moderation system."
 
-            return {
-                "recommendation": final_message,
-                "full_discussion": stock_recommendations.messages,
-                "timestamp": datetime.now().isoformat(),
-            }
+            return consensus_section
 
         except Exception as e:
             print(f"Error during analysis: {str(e)}")
