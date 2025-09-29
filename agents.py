@@ -177,8 +177,8 @@ class StockAnalysisSystem:
             * **Key reason to sell:** [Key Point 1 from SellAgent]
             * **Key reason to hold:** [Key Point 1 from HoldAgent]
 
-            [2 - 3 sentence summary of the overall discussion and why the consensus was reached. Make sure to include relevant statistics or research that 
-            the analysts reference in their debate, and why that helped the analyst reach the final consensus.]
+            [2 - 3 sentence summary of the overall discussion and why the consensus was reached. Make sure to include relevant statistics and news-related 
+            research that the analysts reference in their debate, and why that helped the analyst reach the final consensus.]
 
             End your markdown summary with 'TERMINATE' on a new line.""",
         )
