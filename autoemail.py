@@ -6,6 +6,10 @@ from typing import Dict
 from dotenv import load_dotenv
 import os
 import markdown
+import logging
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 # Load environment variables
 load_dotenv()
@@ -109,15 +113,16 @@ class StockRecommendationEmailer:
             return True
 
         except ValueError as ve:
-            print(f"Validation error: {str(ve)}")
+            logger.error(f"Validation error: {str(ve)}")
             return False
         except smtplib.SMTPAuthenticationError:
-            print("SMTP Authentication failed. Please check your email and password.")
+            logger.error(
+                "SMTP Authentication failed. Please check your email and password."
+            )
             return False
         except smtplib.SMTPException as se:
-            print(f"SMTP error occurred: {str(se)}")
+            logger.error(f"SMTP error occurred: {str(se)}")
             return False
         except Exception as e:
-            print(f"Unexpected error sending email: {str(e)}")
-            print(f"Error type: {type(e).__name__}")
+            logger.error(f"Unexpected error sending email: {str(e)}", exc_info=True)
             return False

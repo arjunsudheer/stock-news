@@ -4,11 +4,11 @@ from autogen_agentchat.conditions import TextMentionTermination
 from autogen_agentchat.teams import SelectorGroupChat
 from autogen_agentchat.messages import BaseAgentEvent, BaseChatMessage
 from typing import Dict, Any, Sequence, List
-from datetime import datetime
 import json
-from duckduckgo_search import DDGS
+from ddgs import DDGS
 from autogen_core.tools import FunctionTool
 import asyncio
+import logging
 from functools import partial
 
 
@@ -25,24 +25,33 @@ async def web_search(query: str, num_results: int = 3) -> List[Dict[str, str]]:
 
         formatted_results = []
         for r in results:
-            formatted_results.append(
-                {"title": r["title"], "link": r["link"], "snippet": r["body"]}
-            )
+            try:
+                formatted_results.append(
+                    {
+                        "title": r.get("title", "No title"),
+                        "link": r.get("url", r.get("link", "No link")),
+                        "snippet": r.get("body", r.get("snippet", "No description")),
+                    }
+                )
+            except (AttributeError, KeyError) as e:
+                logging.warning(f"Skipping malformed result: {str(e)}")
+                continue
+
         return formatted_results
     except Exception as e:
-        print(f"Search error: {str(e)}")
+        logging.error(f"Search error: {str(e)}", exc_info=True)
         return []
 
 
 class StockAnalysisSystem:
     def __init__(self):
         debator_client = OllamaChatCompletionClient(
-            model="mistral-nemo",
+            model="gpt-oss:20b",
             model_info={
                 "vision": False,
                 "function_calling": True,
                 "json_output": False,
-                "family": "mistral",
+                "family": "gpt-4",
                 "structured_output": False,
                 "multiple_system_messages": False,
             },
@@ -61,7 +70,7 @@ class StockAnalysisSystem:
 
         web_search_tool = FunctionTool(
             web_search,
-            description="Use this tool to perform web searches for current information about stocks.",
+            description="Use this tool to perform web searches for current information about stocks that help your claim, or fact check another analyst's claim.",
         )
 
         buy_agent = AssistantAgent(
@@ -79,6 +88,9 @@ class StockAnalysisSystem:
 
             You have access to a web search function that you can use to find current information about stocks.
             You can search for recent news, market analysis, or company developments to support your arguments.
+
+            You must always refer to the stock data provided and any relevant information you find via web search.
+            **DO NOT** ignore the stock data provided, instead use it to back up your arguments.
 
             Always look for the upside potential in stock investments.
             You may reference and critique the other analysts' perspectives.
@@ -103,6 +115,9 @@ class StockAnalysisSystem:
             You have access to a web search function that you can use to find current information about stocks.
             You can search for recent news about risks, competitors, market challenges, or negative developments.
 
+            You must always refer to the stock data provided and any relevant information you find via web search.
+            **DO NOT** ignore the stock data provided, instead use it to back up your arguments.
+            
             Always consider what could go wrong with an investment.
             You may reference and critique the other analysts' perspectives.
             Make sure to cite any information you find from web searches.""",
@@ -120,9 +135,12 @@ class StockAnalysisSystem:
             - Market stability and trends
             - Balanced view of risks and rewards
             - Technical analysis indicators
-
+            
             You have access to a web search function that you can use to find current information about stocks.
             You can search for historical trends, market analysis, and balanced perspectives on the stock.
+
+            You must always refer to the stock data provided and any relevant information you find via web search.
+            **DO NOT** ignore the stock data provided, instead use it to back up your arguments.
 
             Always advocate for patience and careful consideration.
             You may reference and critique the other analysts' perspectives.
@@ -151,7 +169,7 @@ class StockAnalysisSystem:
             Ensure that all the analysts agree on one final recommendation.
 
             After the analysts have reached a consensus, provide a concise summary to the user. **Do not** summarize the entire debate, instead
-            just give the final recommendation with a brief 2 sentence explanation. Your summary must follow this exact format:
+            just give the final recommendation with a brief 2 sentence explanation. Your summary **must follow this exact** format:
 
             **Consensus Recommendation:** [Buy/Sell/Hold]
 
@@ -159,7 +177,8 @@ class StockAnalysisSystem:
             * **Key reason to sell:** [Key Point 1 from SellAgent]
             * **Key reason to hold:** [Key Point 1 from HoldAgent]
 
-            [2 - 3 sentence summary of the overall discussion and why the consensus was reached.]
+            [2 - 3 sentence summary of the overall discussion and why the consensus was reached. Make sure to include relevant statistics or research that 
+            the analysts reference in their debate, and why that helped the analyst reach the final consensus.]
 
             End your markdown summary with 'TERMINATE' on a new line.""",
         )
@@ -233,10 +252,9 @@ class StockAnalysisSystem:
         Please analyze this stock based on the following data:
         
         Symbol: {stock_data.get('stock_data', {}).get('symbol', 'Unknown')}
-        Current Price: ${stock_data.get('stock_data', {}).get('current_price', 'Unknown')}
         
-        Recent News:
-        {json.dumps(stock_data.get('news_articles', []), indent=2)}
+        Recent Research Reports:
+        {json.dumps(stock_data.get('research_reports', []), indent=2)}
         
         Market Data:
         {json.dumps(stock_data.get('stock_data', {}), indent=2)}
@@ -244,6 +262,13 @@ class StockAnalysisSystem:
         Each agent should provide their perspective on whether to buy, sell, or hold this stock.
         Consider all available information and justify your recommendations.
         """
+
+        retry_prompt = """Your last response either did not include the required format or did not specify a valid recommendation. 
+                    The recommendation MUST be "Buy", "Sell", or "Hold".
+                    
+                    You do not need to redo the debate, but just summarize it again.
+
+                    End your markdown summary with 'TERMINATE' on a new line."""
 
         try:
             # Run the SelectorGroupChat and process messages for web search
@@ -253,16 +278,41 @@ class StockAnalysisSystem:
 
             # Extract just the consensus section
             consensus_section = ""
-            if "**Consensus Recommendation:**" in full_message:
-                consensus_parts = full_message.split("**Consensus Recommendation:**")
-                if len(consensus_parts) > 1:
-                    consensus_section = (
-                        "**Consensus Recommendation:**" + consensus_parts[1]
-                    )
-                    consensus_section = consensus_section.split("TERMINATE")[0].strip()
+            retry_count = 0
+            max_retries = 2  # Maximum number of times to retry
+            valid_recommendations = ["buy", "sell", "hold"]
 
-            if not consensus_section:
-                consensus_section = "Error: Could not extract consensus recommendation."
+            # Validate the consensus recommendation format
+            while retry_count <= max_retries:
+                # Ensure the "Consensus Recommendation" section is present
+                if "**Consensus Recommendation:**" in full_message:
+                    consensus_parts = full_message.split(
+                        "**Consensus Recommendation:**"
+                    )
+                    if len(consensus_parts) > 1:
+                        consensus_section = (
+                            "**Consensus Recommendation:**" + consensus_parts[1]
+                        )
+                        consensus_section = consensus_section.split("TERMINATE")[
+                            0
+                        ].strip()
+
+                        # Extract just the recommendation word
+                        first_line = consensus_section.split("\n")[0].strip()
+                        recommendation = (
+                            first_line.replace("**Consensus Recommendation:**", "")
+                            .strip()
+                            .lower()
+                        )
+
+                        if recommendation in valid_recommendations:
+                            break  # Valid recommendation found, skip retry
+
+                stock_recommendations = await self.stock_recommendation_team.run(
+                    task=retry_prompt
+                )
+                full_message = stock_recommendations.messages[-1].content
+                retry_count += 1
 
             # Verify content safety - this will pause execution until moderation is complete
             is_safe = await self.__verify_content_safety(consensus_section)
@@ -273,9 +323,5 @@ class StockAnalysisSystem:
             return consensus_section
 
         except Exception as e:
-            print(f"Error during analysis: {str(e)}")
-            return {
-                "recommendation": "There was an error during analysis.",
-                "full_discussion": "There was an error during analysis.",
-                "timestamp": datetime.now().isoformat(),
-            }
+            logging.error(f"Error during analysis: {str(e)}", exc_info=True)
+            return "There was an error during analysis."
