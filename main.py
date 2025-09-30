@@ -4,11 +4,10 @@ from agents import StockAnalysisSystem
 from autoemail import StockRecommendationEmailer
 from typing import List
 import logging
+from logger_config import setup_logging
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
+# Configure logging for all modules
+setup_logging()
 logger = logging.getLogger(__name__)
 
 

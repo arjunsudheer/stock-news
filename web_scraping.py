@@ -5,11 +5,11 @@ import logging
 from playwright.async_api import async_playwright
 from bs4 import BeautifulSoup
 
-# Configure logging with INFO level for cleaner output
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-)
+from logger_config import setup_logging
+
+# Configure logging for all modules
+setup_logging()
+logger = logging.getLogger(__name__)
 
 
 async def get_stock_data(symbol: str) -> Dict[str, Any]:
@@ -63,7 +63,7 @@ async def get_yahoo_finance_news(symbol: str) -> List[Dict[str, Any]]:
             browser = await p.chromium.launch(headless=True)
             page = await browser.new_page()
 
-            logging.info(f"Navigating to {url} using Playwright")
+            logger.info(f"Navigating to {url} using Playwright")
 
             # Navigate to the page and wait for the DOM to be fully loaded
             await page.goto(url, wait_until="load", timeout=300_000)
@@ -74,7 +74,7 @@ async def get_yahoo_finance_news(symbol: str) -> List[Dict[str, Any]]:
                 'div.listContainer section:not([data-testid="skeleton-loader"])'
             )
 
-            logging.info("Waiting for research reports to load")
+            logger.info("Waiting for research reports to load")
 
             # Playwright waits until the element matching the selector appears
             await page.wait_for_selector(reports_list_selector, timeout=120_000)
@@ -86,7 +86,7 @@ async def get_yahoo_finance_news(symbol: str) -> List[Dict[str, Any]]:
             await page.close()
             await browser.close()
 
-            logging.info("Content successfully rendered and scraped.")
+            logger.info("Content successfully rendered and scraped.")
 
             # Use BeautifulSoup to parse the fully rendered content
             soup = BeautifulSoup(content, "html.parser")
@@ -106,7 +106,7 @@ async def get_yahoo_finance_news(symbol: str) -> List[Dict[str, Any]]:
 
                     for item_section in report_items:
                         if len(all_articles) >= 15:
-                            logging.info("Reached 15 item limit for research reports.")
+                            logger.info("Reached 15 item limit for research reports.")
                             break
 
                         # Find Title (h3.title)
@@ -133,19 +133,19 @@ async def get_yahoo_finance_news(symbol: str) -> List[Dict[str, Any]]:
                         )
                         time.sleep(0.1)
 
-                    logging.info(f"Extracted {len(all_articles)} research reports.")
+                    logger.info(f"Extracted {len(all_articles)} research reports.")
                 else:
-                    logging.warning(
+                    logger.warning(
                         "listContainer div not found within research-reports section."
                     )
             else:
-                logging.warning(
+                logger.warning(
                     "Research reports section [data-testid=research-report] not found."
                 )
 
     except Exception as e:
         # Catches errors like Timeouts if the content doesn't load within 30 seconds
-        logging.error(
+        logger.error(
             f"Playwright operation failed (e.g., Timeout or Browser error): {str(e)}",
             exc_info=True,
         )
