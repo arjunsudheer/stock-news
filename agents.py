@@ -10,6 +10,11 @@ from autogen_core.tools import FunctionTool
 import asyncio
 import logging
 from functools import partial
+from logger_config import setup_logging
+
+# Configure logging for all modules
+setup_logging()
+logger = logging.getLogger(__name__)
 
 
 async def web_search(query: str, num_results: int = 3) -> List[Dict[str, str]]:
@@ -34,24 +39,26 @@ async def web_search(query: str, num_results: int = 3) -> List[Dict[str, str]]:
                     }
                 )
             except (AttributeError, KeyError) as e:
-                logging.warning(f"Skipping malformed result: {str(e)}")
+                logger.warning(f"Skipping malformed result: {str(e)}")
                 continue
 
         return formatted_results
     except Exception as e:
-        logging.error(f"Search error: {str(e)}", exc_info=True)
+        logger.error(f"Search error: {str(e)}", exc_info=True)
         return []
 
 
 class StockAnalysisSystem:
     def __init__(self):
         debator_client = OllamaChatCompletionClient(
-            model="gpt-oss:20b",
+            # model="gpt-oss:20b",
+            model="llama3.1:latest",
             model_info={
                 "vision": False,
                 "function_calling": True,
                 "json_output": False,
-                "family": "gpt-4",
+                # "family": "gpt-4",
+                "family": "llama-3.3-8b",
                 "structured_output": False,
                 "multiple_system_messages": False,
             },
@@ -147,6 +154,27 @@ class StockAnalysisSystem:
             Make sure to cite any information you find from web searches.""",
         )
 
+        summarizer_agent = AssistantAgent(
+            "SummarizerAgent",
+            model_client=debator_client,
+            system_message="""You are a summarizer agent. Your job is to summarize the consensus decision from the analysts, describe each analyst's key point, 
+            and what made the analysts arrive at their consensus.
+
+           **Do not** summarize the entire debate, instead just give the final recommendation with a brief 2 sentence explanation. 
+           Your summary **must follow this exact** format:
+
+            **Consensus Recommendation:** [Buy/Sell/Hold]
+
+            * **Key reason to buy:** [Key Point 1 from BuyAgent]
+            * **Key reason to sell:** [Key Point 1 from SellAgent]
+            * **Key reason to hold:** [Key Point 1 from HoldAgent]
+
+            [2 - 3 sentence summary of the overall discussion and why the consensus was reached. Make sure to include relevant statistics and news-related 
+            research that the analysts reference in their debate, and why that helped the analyst reach the final consensus.]
+
+            End your markdown summary with 'TERMINATE' on a new line.""",
+        )
+
         self.debate_facilitator_agent = AssistantAgent(
             "DebateFacilitator",
             model_client=debator_client,
@@ -168,19 +196,7 @@ class StockAnalysisSystem:
             Finally, guide the group towards a consensus recommendation. Ask each analyst to summarize their final stance and reasoning.
             Ensure that all the analysts agree on one final recommendation.
 
-            After the analysts have reached a consensus, provide a concise summary to the user. **Do not** summarize the entire debate, instead
-            just give the final recommendation with a brief 2 sentence explanation. Your summary **must follow this exact** format:
-
-            **Consensus Recommendation:** [Buy/Sell/Hold]
-
-            * **Key reason to buy:** [Key Point 1 from BuyAgent]
-            * **Key reason to sell:** [Key Point 1 from SellAgent]
-            * **Key reason to hold:** [Key Point 1 from HoldAgent]
-
-            [2 - 3 sentence summary of the overall discussion and why the consensus was reached. Make sure to include relevant statistics and news-related 
-            research that the analysts reference in their debate, and why that helped the analyst reach the final consensus.]
-
-            End your markdown summary with 'TERMINATE' on a new line.""",
+            After the analysts have reached a consensus, you must invoke SummarizerAgent to provide a summary of the debate.""",
         )
 
         self.moderator_agent = AssistantAgent(
@@ -198,6 +214,7 @@ class StockAnalysisSystem:
                 buy_agent,
                 sell_agent,
                 hold_agent,
+                summarizer_agent,
             ],
             model_client=debator_client,
             selector_prompt="""Select an agent to perform task.
@@ -211,7 +228,7 @@ class StockAnalysisSystem:
             Only select one agent.
             """,
             selector_func=self.__selector_func,
-            allow_repeated_speaker=True,
+            allow_repeated_speaker=False,
             termination_condition=text_termination,
             max_turns=20,
         )
@@ -323,5 +340,5 @@ class StockAnalysisSystem:
             return consensus_section
 
         except Exception as e:
-            logging.error(f"Error during analysis: {str(e)}", exc_info=True)
+            logger.error(f"Error during analysis: {str(e)}", exc_info=True)
             return "There was an error during analysis."
