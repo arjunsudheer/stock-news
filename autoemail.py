@@ -87,9 +87,9 @@ class StockRecommendationEmailer:
             if not stock_analyses:
                 raise ValueError("No analyses provided")
 
-            for symbol, analysis in stock_analyses.items():
-                if not analysis:
-                    raise ValueError(f"Analysis result is empty for {symbol}")
+            for symbol in stock_analyses.keys():
+                if not stock_analyses[symbol]:
+                    stock_analyses[symbol] = "No analysis available."
 
             # Create message
             msg = MIMEMultipart("alternative")
